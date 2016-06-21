@@ -1,3 +1,4 @@
+
 bazel-out/*
 *.pyc
 *.so
@@ -5,5 +6,5 @@ tmp/*
 *.png
 old/*
 checkpoints*/*
-
+Arcade-Learning-Environment/*
 
