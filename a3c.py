@@ -7,8 +7,9 @@ import signal
 import random
 import math
 import os
+import time
 
-from game_ac_network import GameACNetwork
+from game_ac_network import GameACFFNetwork, GameACLSTMNetwork
 from a3c_training_thread import A3CTrainingThread
 from rmsprop_applier import RMSPropApplier
 
@@ -24,6 +25,7 @@ from constants import RMSP_EPSILON
 from constants import RMSP_ALPHA
 from constants import GRAD_NORM_CLIP
 from constants import USE_GPU
+from constants import USE_LSTM
 
 
 def log_uniform(lo, hi, rate):
@@ -44,7 +46,11 @@ global_t = 0
 
 stop_requested = False
 
-global_network = GameACNetwork(ACTION_SIZE, device)
+if USE_LSTM:
+  global_network = GameACLSTMNetwork(ACTION_SIZE, -1, device)
+else:
+  global_network = GameACFFNetwork(ACTION_SIZE, device)
+
 
 training_threads = []
 
@@ -65,7 +71,8 @@ for i in range(PARALLEL_SIZE):
   training_threads.append(training_thread)
 
 # prepare session
-sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
+sess = tf.Session(config=tf.ConfigProto(log_device_placement=False,
+                                        allow_soft_placement=True))
 
 init = tf.initialize_all_variables()
 sess.run(init)
@@ -82,19 +89,28 @@ saver = tf.train.Saver()
 checkpoint = tf.train.get_checkpoint_state(CHECKPOINT_DIR)
 if checkpoint and checkpoint.model_checkpoint_path:
   saver.restore(sess, checkpoint.model_checkpoint_path)
-  print "checkpoint loaded:", checkpoint.model_checkpoint_path
+  print("checkpoint loaded:", checkpoint.model_checkpoint_path)
   tokens = checkpoint.model_checkpoint_path.split("-")
   # set global step
   global_t = int(tokens[1])
-  print ">>> global step set: ", global_t
+  print(">>> global step set: ", global_t)
+  # set wall time
+  wall_t_fname = CHECKPOINT_DIR + '/' + 'wall_t.' + str(global_t)
+  with open(wall_t_fname, 'r') as f:
+    wall_t = float(f.read())
 else:
-  print "Could not find old checkpoint"
+  print("Could not find old checkpoint")
+  # set wall time
+  wall_t = 0.0
 
 
 def train_function(parallel_index):
   global global_t
   
   training_thread = training_threads[parallel_index]
+  # set start_time
+  start_time = time.time() - wall_t
+  training_thread.set_start_time(start_time)
 
   while True:
     if stop_requested:
@@ -118,6 +134,9 @@ for i in range(PARALLEL_SIZE):
   
 signal.signal(signal.SIGINT, signal_handler)
 
+# set start time
+start_time = time.time() - wall_t
+
 for t in train_threads:
   t.start()
 
@@ -132,5 +151,12 @@ for t in train_threads:
 if not os.path.exists(CHECKPOINT_DIR):
   os.mkdir(CHECKPOINT_DIR)  
 
+# write wall time
+wall_t = time.time() - start_time
+wall_t_fname = CHECKPOINT_DIR + '/' + 'wall_t.' + str(global_t)
+with open(wall_t_fname, 'w') as f:
+  f.write(str(wall_t))
+
 saver.save(sess, CHECKPOINT_DIR + '/' + 'checkpoint', global_step = global_t)
+
 
